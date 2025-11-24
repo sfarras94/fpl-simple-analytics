@@ -220,8 +220,52 @@ st.title("🔥 FPL Analytics Dashboard")
 st.write("Using cached local data for instant loading.")
 
 st.subheader("📊 Player Value Table")
-st.dataframe(table, use_container_width=True, hide_index=True)
+st.dataframe(
+    table,
+    use_container_width=True,
+    hide_index=True,
+    column_config={
+        "Player": st.column_config.TextColumn(
+            "Player",
+            help="Player’s short name (web_name from FPL API)"
+        ),
+        "Team": st.column_config.TextColumn(
+            "Team",
+            help="Premier League team"
+        ),
+        "Position": st.column_config.TextColumn(
+            "Pos",
+            help="GK, DEF, MID, or FWD"
+        ),
+        "Points (GW Range)": st.column_config.NumberColumn(
+            "Points (GW Range)",
+            help="Total FPL points earned by the player between selected gameweeks"
+        ),
+        "Current Price": st.column_config.NumberColumn(
+            "Price (£m)",
+            help="Player’s cost in millions (FPL now_cost / 10)"
+        ),
+        "Points Per Million": st.column_config.NumberColumn(
+            "PPM",
+            help="Points (GW Range) divided by current price. A key measure of value."
+        ),
+        "Selected By %": st.column_config.NumberColumn(
+            "Selected %",
+            help="Percentage of FPL managers who own this player"
+        ),
+        "Template Value": st.column_config.NumberColumn(
+            "Template Value",
+            help="PPM × Selected %. Higher = template pick"
+        ),
+        "Differential Value": st.column_config.NumberColumn(
+            "Differential Value",
+            help="PPM × (1 – Selected %). Higher = differential pick"
+        ),
+    }
+)
+
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
