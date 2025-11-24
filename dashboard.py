@@ -44,7 +44,7 @@ def set_background(image_file):
         unsafe_allow_html=True
     )
 
-IMAGE_PATH = r"C:\Users\samfa\Documents\fpl-analytics-project\bg1.png"
+IMAGE_PATH = "bg1.png"
 set_background(IMAGE_PATH)
 
 # =========================================================
@@ -217,3 +217,4 @@ st.subheader("📊 Player Value Table")
 st.dataframe(table, use_container_width=True, hide_index=True)
 
 st.markdown("</div>", unsafe_allow_html=True)
+
