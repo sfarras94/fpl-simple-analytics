@@ -119,32 +119,25 @@ min_gw = int(weekly_df["round"].min())
 max_gw = int(weekly_df["round"].max())
 
 # =========================================================
-# SIDEBAR FILTERS + RESET
+# SIDEBAR FILTERS
 # =========================================================
 st.sidebar.title("🔍 Filters")
 
-# Reset all filters button
-if st.sidebar.button("🔄 Reset All Filters"):
-    st.session_state.team_filter = "All Teams"
-    st.session_state.position_filter = "All"
-    st.session_state.gw_slider = (min_gw, max_gw)
-    st.session_state.sort_column = "Points (GW Range)"
-    st.session_state.sort_order = "Descending"
-    st.session_state.selected_player = "None"
-    st.rerun()
-
+# Team filter
 team_filter = st.sidebar.selectbox(
     "Team",
     ["All Teams"] + sorted(players["Team"].unique()),
     key="team_filter"
 )
 
+# Position filter
 position_filter = st.sidebar.selectbox(
     "Position",
     ["All", "GK", "DEF", "MID", "FWD"],
     key="position_filter"
 )
 
+# Gameweek slider
 gw_start, gw_end = st.sidebar.slider(
     "Gameweek Range",
     min_value=min_gw,
@@ -153,6 +146,7 @@ gw_start, gw_end = st.sidebar.slider(
     key="gw_slider"
 )
 
+# Sorting dropdowns
 sort_column = st.sidebar.selectbox(
     "Sort Table By",
     [
@@ -172,11 +166,25 @@ sort_order = st.sidebar.radio(
     key="sort_order"
 )
 
+# Player selection
 selected_player = st.sidebar.selectbox(
     "View Player Details",
     ["None"] + sorted(players["web_name"].unique()),
     key="selected_player"
 )
+
+# -----------------------------
+# ✅ Reset button MUST come LAST
+# -----------------------------
+if st.sidebar.button("🔄 Reset All Filters"):
+    st.session_state.team_filter = "All Teams"
+    st.session_state.position_filter = "All"
+    st.session_state.gw_slider = (min_gw, max_gw)
+    st.session_state.sort_column = "Points (GW Range)"
+    st.session_state.sort_order = "Descending"
+    st.session_state.selected_player = "None"
+    st.rerun()
+
 
 # =========================================================
 # FILTER DATA
@@ -349,3 +357,4 @@ st.dataframe(
 )
 
 st.markdown("</div>", unsafe_allow_html=True)
+
