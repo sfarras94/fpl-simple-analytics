@@ -217,6 +217,56 @@ ascending = (sort_order == "Ascending")
 table = table.sort_values(by=sort_column, ascending=ascending)
 
 # =========================================================
+# PLAYER DETAIL PANEL
+# =========================================================
+if selected_player != "None":
+
+    st.subheader(f"📌 Detailed FPL Breakdown — {selected_player}")
+
+    # Get player ID
+    pid = int(players[players["web_name"] == selected_player]["id"].iloc[0])
+    history = weekly.get(str(pid), [])
+
+    if history:
+        df_hist = pd.DataFrame(history)
+
+        # Display basic stats
+        st.markdown("### 🔍 Season Summary")
+        st.write(players[players["web_name"] == selected_player][[
+            "Team", "Position", "Current Price", "Selected By %"
+        ]].rename(columns={"web_name": "Player"}))
+
+        # Breakdown table
+        st.markdown("### 📊 Points Breakdown by Gameweek")
+        st.dataframe(df_hist[[
+            "round",
+            "total_points",
+            "goals_scored",
+            "assists",
+            "clean_sheets",
+            "bonus",
+            "minutes",
+            "expected_goals",
+            "expected_assists",
+            "expected_goal_involvements"
+        ]].sort_values("round"), use_container_width=True)
+
+        # Chart
+        import plotly.express as px
+        fig = px.line(
+            df_hist,
+            x="round",
+            y="total_points",
+            markers=True,
+            title=f"Points per GW — {selected_player}",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    else:
+        st.info("No weekly data available for this player.")
+
+
+# =========================================================
 # PAGE CONTENT
 # =========================================================
 st.markdown("<div class='main-container'>", unsafe_allow_html=True)
@@ -271,6 +321,7 @@ st.dataframe(
 
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
