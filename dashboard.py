@@ -119,64 +119,64 @@ min_gw = int(weekly_df["round"].min())
 max_gw = int(weekly_df["round"].max())
 
 # =========================================================
-# SIDEBAR FILTERS
+# SIDEBAR FILTERS (FORM TO PREVENT WIDGET TREE COLLISIONS)
 # =========================================================
-st.sidebar.title("🔍 Filters")
+with st.sidebar.form("filters_form", clear_on_submit=False):
 
-# Team filter
-team_filter = st.sidebar.selectbox(
-    "Team",
-    ["All Teams"] + sorted(players["Team"].unique()),
-    key="team_filter"
-)
+    st.header("🔍 Filters")
 
-# Position filter
-position_filter = st.sidebar.selectbox(
-    "Position",
-    ["All", "GK", "DEF", "MID", "FWD"],
-    key="position_filter"
-)
+    team_filter = st.selectbox(
+        "Team",
+        ["All Teams"] + sorted(players["Team"].unique()),
+        key="team_filter"
+    )
 
-# Gameweek slider
-gw_start, gw_end = st.sidebar.slider(
-    "Gameweek Range",
-    min_value=min_gw,
-    max_value=max_gw,
-    value=(min_gw, max_gw),
-    key="gw_slider"
-)
+    position_filter = st.selectbox(
+        "Position",
+        ["All", "GK", "DEF", "MID", "FWD"],
+        key="position_filter"
+    )
 
-# Sorting dropdowns
-sort_column = st.sidebar.selectbox(
-    "Sort Table By",
-    [
-        "Points (GW Range)",
-        "Current Price",
-        "Points Per Million",
-        "Selected By %",
-        "Template Value",
-        "Differential Value"
-    ],
-    key="sort_column"
-)
+    gw_start, gw_end = st.slider(
+        "Gameweek Range",
+        min_value=min_gw,
+        max_value=max_gw,
+        value=(min_gw, max_gw),
+        key="gw_slider"
+    )
 
-sort_order = st.sidebar.radio(
-    "Sort Order",
-    ["Descending", "Ascending"],
-    key="sort_order"
-)
+    sort_column = st.selectbox(
+        "Sort Table By",
+        [
+            "Points (GW Range)",
+            "Current Price",
+            "Points Per Million",
+            "Selected By %",
+            "Template Value",
+            "Differential Value"
+        ],
+        key="sort_column"
+    )
 
-# Player selection
-selected_player = st.sidebar.selectbox(
-    "View Player Details",
-    ["None"] + sorted(players["web_name"].unique()),
-    key="selected_player"
-)
+    sort_order = st.radio(
+        "Sort Order",
+        ["Descending", "Ascending"],
+        key="sort_order"
+    )
 
-# -----------------------------
-# ✅ Reset button MUST come LAST
-# -----------------------------
-if st.sidebar.button("🔄 Reset All Filters"):
+    selected_player = st.selectbox(
+        "View Player Details",
+        ["None"] + sorted(players["web_name"].unique()),
+        key="selected_player"
+    )
+
+    # -----------------------------
+    # RESET BUTTON THAT ALWAYS RENDERS
+    # -----------------------------
+    reset_clicked = st.form_submit_button("🔄 Reset All Filters")
+
+# Reset after form submit
+if reset_clicked:
     st.session_state.team_filter = "All Teams"
     st.session_state.position_filter = "All"
     st.session_state.gw_slider = (min_gw, max_gw)
@@ -357,4 +357,5 @@ st.dataframe(
 )
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
