@@ -114,14 +114,18 @@ max_gw = int(weekly_df["round"].max())
 
 
 # -----------------------------------------
-# SIDEBAR FILTERS + RESET BUTTON
+# SIDEBAR FILTERS + RESET BUTTON (FIXED ORDER)
 # -----------------------------------------
+
 st.sidebar.title("🔍 Filters")
 
-# 🔄 Reset button at the very top of sidebar
-reset_clicked = st.sidebar.button("🔄 Reset All Filters")
+# --- RESET BUTTON MUST COME FIRST ---
+if st.sidebar.button("🔄 Reset All Filters"):
+    st.session_state.clear()
+    st.session_state.selected_player = "None"
+    st.experimental_rerun()
 
-# Filters (values also stored in st.session_state via keys)
+# Now safely create all widgets
 team_filter = st.sidebar.selectbox(
     "Team",
     ["All Teams"] + sorted(players["Team"].unique()),
@@ -166,17 +170,6 @@ selected_player = st.sidebar.selectbox(
     ["None"] + sorted(players["web_name"].unique()),
     key="selected_player"
 )
-
-# If reset is clicked, overwrite session_state and rerun
-if reset_clicked:
-    st.session_state.team_filter = "All Teams"
-    st.session_state.position_filter = "All"
-    st.session_state.gw_slider = (min_gw, max_gw)
-    st.session_state.sort_column = "Points (GW Range)"
-    st.session_state.sort_order = "Descending"
-    st.session_state.selected_player = "None"
-    st.experimental_rerun()
-
 
 # -----------------------------------------
 # FILTER BASE TABLE
@@ -321,6 +314,7 @@ st.dataframe(
 )
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
 
