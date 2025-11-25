@@ -116,7 +116,10 @@ max_gw = int(weekly_df["round"].max())
 # -----------------------------------------
 # SIDEBAR FILTERS + RESET BUTTON
 # -----------------------------------------
+st.sidebar.title("THIS IS THE NEW FILE")
+
 st.sidebar.title("🔍 Filters")
+
 position_filter = st.sidebar.selectbox(
     "Position",
     ["All", "GK", "DEF", "MID", "FWD"],
@@ -322,4 +325,5 @@ st.dataframe(
 )
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
