@@ -5,13 +5,6 @@ import base64
 import os
 
 # -----------------------------------------
-# Session State Defaults
-# -----------------------------------------
-if "selected_player" not in st.session_state:
-    st.session_state.selected_player = "None"
-
-
-# -----------------------------------------
 # BACKGROUND IMAGE
 # -----------------------------------------
 def set_background(image_file):
@@ -50,7 +43,6 @@ def set_background(image_file):
         unsafe_allow_html=True
     )
 
-
 IMAGE_PATH = "bg1.png"   # Ensure bg1.png exists in repo root
 set_background(IMAGE_PATH)
 
@@ -81,15 +73,21 @@ def load_players():
 
     # Pricing
     df["Current Price"] = df["now_cost"] / 10
+
+    # Season-long PPM (we override with GW-range later)
     df["Points Per Million"] = df["total_points"] / df["Current Price"]
 
     # Selection %
-    df["Selected By (Decimal)"] = pd.to_numeric(df["selected_by_percent"], errors="coerce") / 100
+    df["Selected By (Decimal)"] = pd.to_numeric(
+        df["selected_by_percent"], errors="coerce"
+    ) / 100
     df["Selected By %"] = df["Selected By (Decimal)"] * 100
 
-    # Template & differential
+    # Template & differential (season-based)
     df["Template Value"] = df["Points Per Million"] * df["Selected By (Decimal)"]
-    df["Differential Value"] = df["Points Per Million"] * (1 - df["Selected By (Decimal)"])
+    df["Differential Value"] = df["Points Per Million"] * (
+        1 - df["Selected By (Decimal)"]
+    )
 
     return df
 
@@ -102,7 +100,6 @@ def load_weekly():
 
 players = load_players()
 weekly = load_weekly()
-
 
 # -----------------------------------------
 # BUILD WEEKLY DF FOR SLIDER LIMITS
@@ -117,61 +114,60 @@ max_gw = int(weekly_df["round"].max())
 
 
 # -----------------------------------------
-# SIDEBAR FILTERS (FIXED WITH A FORM)
+# SIDEBAR FILTERS + RESET BUTTON
 # -----------------------------------------
-with st.sidebar.form("filters_form", clear_on_submit=False):
+st.sidebar.title("🔍 Filters")
 
-    st.header("🔍 Filters")
+# 🔄 Reset button at the very top of sidebar
+reset_clicked = st.sidebar.button("🔄 Reset All Filters")
 
-    team_filter = st.selectbox(
-        "Team",
-        ["All Teams"] + sorted(players["Team"].unique()),
-        key="team_filter"
-    )
+# Filters (values also stored in st.session_state via keys)
+team_filter = st.sidebar.selectbox(
+    "Team",
+    ["All Teams"] + sorted(players["Team"].unique()),
+    key="team_filter"
+)
 
-    position_filter = st.selectbox(
-        "Position",
-        ["All", "GK", "DEF", "MID", "FWD"],
-        key="position_filter"
-    )
+position_filter = st.sidebar.selectbox(
+    "Position",
+    ["All", "GK", "DEF", "MID", "FWD"],
+    key="position_filter"
+)
 
-    gw_start, gw_end = st.slider(
-        "Gameweek Range",
-        min_value=min_gw,
-        max_value=max_gw,
-        value=(min_gw, max_gw),
-        key="gw_slider"
-    )
+gw_start, gw_end = st.sidebar.slider(
+    "Gameweek Range",
+    min_value=min_gw,
+    max_value=max_gw,
+    value=(min_gw, max_gw),
+    key="gw_slider"
+)
 
-    sort_column = st.selectbox(
-        "Sort Table By",
-        [
-            "Points (GW Range)",
-            "Current Price",
-            "Points Per Million",
-            "Selected By %",
-            "Template Value",
-            "Differential Value"
-        ],
-        key="sort_column"
-    )
+sort_column = st.sidebar.selectbox(
+    "Sort Table By",
+    [
+        "Points (GW Range)",
+        "Current Price",
+        "Points Per Million",
+        "Selected By %",
+        "Template Value",
+        "Differential Value"
+    ],
+    key="sort_column"
+)
 
-    sort_order = st.radio(
-        "Sort Order",
-        ["Descending", "Ascending"],
-        key="sort_order"
-    )
+sort_order = st.sidebar.radio(
+    "Sort Order",
+    ["Descending", "Ascending"],
+    key="sort_order"
+)
 
-    selected_player = st.selectbox(
-        "View Player Details",
-        ["None"] + sorted(players["web_name"].unique()),
-        key="selected_player"
-    )
+selected_player = st.sidebar.selectbox(
+    "View Player Details",
+    ["None"] + sorted(players["web_name"].unique()),
+    key="selected_player"
+)
 
-    # Always visible reset button
-    reset_clicked = st.form_submit_button("🔄 Reset All Filters")
-
-# Reset state after form submission
+# If reset is clicked, overwrite session_state and rerun
 if reset_clicked:
     st.session_state.team_filter = "All Teams"
     st.session_state.position_filter = "All"
@@ -179,7 +175,7 @@ if reset_clicked:
     st.session_state.sort_column = "Points (GW Range)"
     st.session_state.sort_order = "Descending"
     st.session_state.selected_player = "None"
-    st.rerun()
+    st.experimental_rerun()
 
 
 # -----------------------------------------
@@ -187,11 +183,11 @@ if reset_clicked:
 # -----------------------------------------
 filtered = players.copy()
 
-if st.session_state.team_filter != "All Teams":
-    filtered = filtered[filtered["Team"] == st.session_state.team_filter]
+if team_filter != "All Teams":
+    filtered = filtered[filtered["Team"] == team_filter]
 
-if st.session_state.position_filter != "All":
-    filtered = filtered[filtered["Position"] == st.session_state.position_filter]
+if position_filter != "All":
+    filtered = filtered[filtered["Position"] == position_filter]
 
 
 # -----------------------------------------
@@ -207,7 +203,7 @@ def get_points_for_range(player_id, gw1, gw2):
 
 
 filtered["Points (GW Range)"] = filtered.apply(
-    lambda row: get_points_for_range(row["id"], st.session_state.gw_slider[0], st.session_state.gw_slider[1]),
+    lambda row: get_points_for_range(row["id"], gw_start, gw_end),
     axis=1
 )
 
@@ -224,7 +220,7 @@ table = filtered[[
     "Selected By %"
 ]].rename(columns={"web_name": "Player"})
 
-# Recalculate dynamic metrics
+# Recalculate dynamic metrics based on GW-range points
 table["Points Per Million"] = table["Points (GW Range)"] / table["Current Price"]
 
 sel_decimal = table["Selected By %"] / 100
@@ -244,16 +240,16 @@ round_cols = [
 table[round_cols] = table[round_cols].round(2)
 
 # Sorting
-ascending = (st.session_state.sort_order == "Ascending")
-table = table.sort_values(by=st.session_state.sort_column, ascending=ascending)
+ascending = (sort_order == "Ascending")
+table = table.sort_values(by=sort_column, ascending=ascending)
 
 
 # -----------------------------------------
 # PLAYER DETAIL PANEL
 # -----------------------------------------
-if st.session_state.selected_player != "None":
+if selected_player != "None":
 
-    player_name = st.session_state.selected_player
+    player_name = selected_player
     st.subheader(f"📌 Detailed FPL Breakdown — {player_name}")
 
     pid = int(players[players["web_name"] == player_name]["id"].iloc[0])
@@ -268,18 +264,21 @@ if st.session_state.selected_player != "None":
         ]])
 
         st.markdown("### 📊 Points Breakdown by Gameweek")
-        st.dataframe(df_hist[[
-            "round",
-            "total_points",
-            "goals_scored",
-            "assists",
-            "clean_sheets",
-            "bonus",
-            "minutes",
-            "expected_goals",
-            "expected_assists",
-            "expected_goal_involvements"
-        ]].sort_values("round"), use_container_width=True)
+        st.dataframe(
+            df_hist[[
+                "round",
+                "total_points",
+                "goals_scored",
+                "assists",
+                "clean_sheets",
+                "bonus",
+                "minutes",
+                "expected_goals",
+                "expected_assists",
+                "expected_goal_involvements"
+            ]].sort_values("round"),
+            use_container_width=True
+        )
 
         import plotly.express as px
         fig = px.line(
