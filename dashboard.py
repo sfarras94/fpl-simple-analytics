@@ -324,12 +324,24 @@ if selected_player != "None":
                 gc_points = 0
 
             # Defensive contributions
-            if position == "DEF":
-                def_points = (def_contrib // 10) * 2
-            elif position in ["MID", "FWD"]:
-                def_points = (def_contrib // 12) * 2
-            else:
-                def_points = 0  # GK
+            def calculate_def_contribution_points(df, position):
+            """Calculate defensive contribution points match-by-match (capped at 2 per match)."""
+
+            def_points = 0
+
+            for _, row in df.iterrows():
+                dc = row.get("defensive_contribution", 0)
+
+                if position == "DEF":
+                    if dc >= 10:
+                        def_points += 2
+                elif position in ["MID", "FWD"]:
+                    if dc >= 12:
+                        def_points += 2
+                # GK gets no defensive contribution bonus
+
+            return def_points
+
 
             assists_points_per = 3
             minutes_points = apps_60 * 2 + apps_sub * 1
@@ -604,3 +616,4 @@ st.dataframe(
 )
 
 st.markdown("</div>", unsafe_allow_html=True)
+
