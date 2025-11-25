@@ -116,15 +116,7 @@ max_gw = int(weekly_df["round"].max())
 # -----------------------------------------
 # SIDEBAR FILTERS + RESET BUTTON
 # -----------------------------------------
-st.sidebar.title("THIS IS THE NEW FILE")
-
 st.sidebar.title("🔍 Filters")
-
-position_filter = st.sidebar.selectbox(
-    "Position",
-    ["All", "GK", "DEF", "MID", "FWD"],
-    key="position_filter"
-)
 
 # 🔄 Reset button at the very top of sidebar
 reset_clicked = st.sidebar.button("🔄 Reset All Filters")
@@ -136,7 +128,11 @@ team_filter = st.sidebar.selectbox(
     key="team_filter"
 )
 
-
+position_filter = st.sidebar.selectbox(
+    "Position",
+    ["All", "GK", "DEF", "MID", "FWD"],
+    key="position_filter"
+)
 
 gw_start, gw_end = st.sidebar.slider(
     "Gameweek Range",
@@ -325,5 +321,6 @@ st.dataframe(
 )
 
 st.markdown("</div>", unsafe_allow_html=True)
+
 
 
