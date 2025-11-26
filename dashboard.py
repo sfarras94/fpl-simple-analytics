@@ -79,7 +79,6 @@ def load_players():
     df["Position"] = df["element_type"].map(pos_map)
 
     df["Current Price"] = df["now_cost"] / 10
-
     df["Points Per Million"] = df["total_points"] / df["Current Price"]
 
     df["Selected By (Decimal)"] = pd.to_numeric(df["selected_by_percent"], errors="coerce") / 100
@@ -234,22 +233,115 @@ table = table.sort_values(by=sort_column, ascending=ascending)
 
 
 # -----------------------------------------
-# DEFENSIVE CONTRIBUTION LOGIC (FPL Accurate)
+# FPL BREAKDOWN LOGIC (per GW, with DC + penalties + cards + OG)
 # -----------------------------------------
-def calculate_def_contribution_points(df, position):
-    """Correct FPL rule: max 2 pts per match, threshold-based."""
-    total = 0
+def calculate_fpl_breakdown(df_match: pd.DataFrame, position: str):
+    """
+    Compute FPL points by category over a set of matches (df_match),
+    using official scoring rules and respecting gameweek range.
+    """
+    totals = {
+        "Goals": 0,
+        "Assists": 0,
+        "Clean Sheets": 0,
+        "Minutes ≥60": 0,
+        "Minutes <60": 0,
+        "Saves": 0,
+        "Penalties Saved": 0,
+        "Penalties Missed": 0,
+        "Goals Conceded": 0,
+        "Bonus": 0,
+        "Yellow Cards": 0,
+        "Red Cards": 0,
+        "Own Goals": 0,
+        "Defensive Contributions": 0,
+    }
 
-    for _, row in df.iterrows():
-        dc = row.get("defensive_contribution", 0)
+    goal_values = {"GK": 10, "DEF": 6, "MID": 5, "FWD": 4}
 
+    for _, row in df_match.iterrows():
+        minutes = row.get("minutes", 0) or 0
+        goals = row.get("goals_scored", 0) or 0
+        assists = row.get("assists", 0) or 0
+        clean_sheets = row.get("clean_sheets", 0) or 0
+        goals_conceded = row.get("goals_conceded", 0) or 0
+        saves = row.get("saves", 0) or 0
+        pens_saved = row.get("penalties_saved", 0) or 0
+        pens_missed = row.get("penalties_missed", 0) or 0
+        yc = row.get("yellow_cards", 0) or 0
+        rc = row.get("red_cards", 0) or 0
+        own_goals = row.get("own_goals", 0) or 0
+        bonus = row.get("bonus", 0) or 0
+        dc = row.get("defensive_contribution", 0) or 0
+
+        # Minutes
+        if minutes >= 60:
+            totals["Minutes ≥60"] += 2
+        elif 0 < minutes < 60:
+            totals["Minutes <60"] += 1
+
+        # Goals
+        if goals:
+            value = goal_values.get(position, 0)
+            totals["Goals"] += goals * value
+
+        # Assists
+        if assists:
+            totals["Assists"] += assists * 3
+
+        # Clean sheets: need 60+ mins for CS points
+        if minutes >= 60 and clean_sheets > 0:
+            if position in ["GK", "DEF"]:
+                totals["Clean Sheets"] += 4
+            elif position == "MID":
+                totals["Clean Sheets"] += 1
+
+        # Saves (GK only)
+        if position == "GK" and saves:
+            totals["Saves"] += (saves // 3) * 1
+
+        # Penalties saved (GK only)
+        if position == "GK" and pens_saved:
+            totals["Penalties Saved"] += pens_saved * 5
+
+        # Penalties missed (any position)
+        if pens_missed:
+            totals["Penalties Missed"] += pens_missed * -2
+
+        # Goals conceded (GK/DEF, per 2 conceded)
+        if position in ["GK", "DEF"] and goals_conceded and minutes > 0:
+            totals["Goals Conceded"] += -1 * (goals_conceded // 2)
+
+        # Bonus
+        if bonus:
+            totals["Bonus"] += bonus
+
+        # Cards
+        if yc:
+            totals["Yellow Cards"] += -1 * yc
+        if rc:
+            totals["Red Cards"] += -3 * rc
+
+        # Own goals
+        if own_goals:
+            totals["Own Goals"] += -2 * own_goals
+
+        # Defensive contributions: capped at +2 per match
         if position == "DEF" and dc >= 10:
-            total += 2
+            totals["Defensive Contributions"] += 2
         elif position in ["MID", "FWD"] and dc >= 12:
-            total += 2
-        # GK always gets 0
+            totals["Defensive Contributions"] += 2
+        # GK gets 0 from DC
 
-    return total
+    # Compare with actual total_points
+    real_total = df_match["total_points"].sum()
+    calc_total = sum(totals.values())
+    diff = real_total - calc_total
+
+    if abs(diff) != 0:
+        totals["Other / Uncaptured"] = diff
+
+    return totals, real_total
 
 
 # -----------------------------------------
@@ -264,115 +356,74 @@ if selected_player != "None":
     history = weekly.get(str(pid), [])
     df_hist = pd.DataFrame(history)
 
-    # Filter only selected GW range
-    df_range = df_hist[(df_hist["round"] >= gw_start) & (df_hist["round"] <= gw_end)]
+    # Raw df for calculations
+    df_range_raw = df_hist[(df_hist["round"] >= gw_start) & (df_hist["round"] <= gw_end)].copy()
 
-    # Drop expected stats
-    df_range = df_range.drop(columns=[
-        "expected_goals",
-        "expected_assists",
-        "expected_goal_involvements",
-    ], errors="ignore")
-
-    # Rename columns
-    df_range = df_range.rename(columns={
-        "round": "Gameweek",
-        "total_points": "Points",
-        "goals_scored": "Goals",
-        "assists": "Assists",
-        "clean_sheets": "Clean Sheets",
-        "goals_conceded": "Goals Conceded",
-        "bonus": "Bonus",
-        "minutes": "Minutes",
-        "yellow_cards": "Yellow Cards",
-        "red_cards": "Red Cards",
-        "saves": "Saves",
-    })
-
-    # Conditional defensive/saves visibility
-    if position != "GK":
-        df_range = df_range.drop(columns=["Saves"], errors="ignore")
-
-    if position not in ["GK", "DEF"]:
-        df_range = df_range.drop(columns=["Goals Conceded"], errors="ignore")
-
-    if position == "FWD":
-        df_range = df_range.drop(columns=["Clean Sheets"], errors="ignore")
-
-    # -----------------------------------------
-    # FPL POINTS BREAKDOWN (GW-Range Correct)
-    # -----------------------------------------
-    mins = df_range["Minutes"]
-    mins_60 = (mins >= 60).sum()
-    mins_sub = ((mins > 0) & (mins < 60)).sum()
-
-    goal_values = {"GK": 10, "DEF": 6, "MID": 5, "FWD": 4}
-
-    goals = df_range["Goals"].sum() if "Goals" in df_range else 0
-    assists = df_range["Assists"].sum() if "Assists" in df_range else 0
-
-    # Clean sheets
-    if position == "GK":
-        clean_sheet_points = (df_range["Clean Sheets"] >= 1).sum() * 4
-    elif position == "DEF":
-        clean_sheet_points = (df_range["Clean Sheets"] >= 1).sum() * 4
-    elif position == "MID":
-        clean_sheet_points = (df_range["Clean Sheets"] >= 1).sum() * 1
+    # Early exit if no matches
+    if df_range_raw.empty:
+        st.subheader(f"📌 FPL Points Contribution (GW {gw_start}-{gw_end}) — {player_name}")
+        st.info("No match data in this gameweek range.")
     else:
-        clean_sheet_points = 0
+        # Compute breakdown using raw columns
+        breakdown_points, total_points = calculate_fpl_breakdown(df_range_raw, position)
 
-    saves_points = 0
-    if position == "GK" and "Saves" in df_range:
-        saves_points = (df_range["Saves"].sum() // 3) * 1
+        breakdown_df = pd.DataFrame({
+            "Category": list(breakdown_points.keys()),
+            "Total Points": list(breakdown_points.values()),
+        })
 
-    conceded_points = 0
-    if position in ["GK", "DEF"] and "Goals Conceded" in df_range:
-        conceded_points = -1 * (df_range["Goals Conceded"].sum() // 2)
-
-    yc_points = -1 * df_range["Yellow Cards"].sum() if "Yellow Cards" in df_range else 0
-    rc_points = -3 * df_range["Red Cards"].sum() if "Red Cards" in df_range else 0
-
-    bonus_points = df_range["Bonus"].sum() if "Bonus" in df_range else 0
-
-    # FIX APPLIED HERE — use df_range, not df_hist
-    def_points = calculate_def_contribution_points(df_range, position)
-
-    breakdown_points = {
-        "Goals": goals * goal_values[position],
-        "Assists": assists * 3,
-        "Clean Sheets": clean_sheet_points,
-        "Minutes ≥60": mins_60 * 2,
-        "Minutes <60": mins_sub * 1,
-        "Saves": saves_points,
-        "Goals Conceded": conceded_points,
-        "Bonus": bonus_points,
-        "Yellow Cards": yc_points,
-        "Red Cards": rc_points,
-        "Defensive Contributions": def_points,
-    }
-
-    total_points = sum(breakdown_points.values())
-
-    breakdown_df = pd.DataFrame({
-        "Category": breakdown_points.keys(),
-        "Total Points": breakdown_points.values(),
-        "Percent %": [
+        # Percent of actual FPL total
+        breakdown_df["Percent %"] = [
             round((v / total_points) * 100, 1) if total_points != 0 else 0
-            for v in breakdown_points.values()
+            for v in breakdown_df["Total Points"]
         ]
-    })
 
-    # -----------------------------------------
-    # DISPLAY BREAKDOWN TABLE
-    # -----------------------------------------
-    st.subheader(f"📌 FPL Points Contribution (GW {gw_start}-{gw_end}) — {player_name}")
-    st.dataframe(breakdown_df, hide_index=True, use_container_width=True)
+        # Display contribution table
+        st.subheader(f"📌 FPL Points Contribution (GW {gw_start}-{gw_end}) — {player_name}")
+        st.dataframe(breakdown_df, hide_index=True, use_container_width=True)
 
-    # -----------------------------------------
-    # GAMEWEEK-BY-GAMEWEEK BREAKDOWN
-    # -----------------------------------------
-    st.subheader(f"📊 Points Breakdown by Gameweek (GW {gw_start}-{gw_end})")
-    st.dataframe(df_range, hide_index=True, use_container_width=True)
+        # -----------------------------------------
+        # GAMEWEEK BREAKDOWN TABLE (DISPLAY-FRIENDLY)
+        # -----------------------------------------
+        df_range = df_range_raw.copy()
+
+        # Drop expected stats
+        df_range = df_range.drop(columns=[
+            "expected_goals",
+            "expected_assists",
+            "expected_goal_involvements",
+        ], errors="ignore")
+
+        # Rename for display
+        df_range = df_range.rename(columns={
+            "round": "Gameweek",
+            "total_points": "Points",
+            "goals_scored": "Goals",
+            "assists": "Assists",
+            "clean_sheets": "Clean Sheets",
+            "goals_conceded": "Goals Conceded",
+            "bonus": "Bonus",
+            "minutes": "Minutes",
+            "yellow_cards": "Yellow Cards",
+            "red_cards": "Red Cards",
+            "saves": "Saves",
+        })
+
+        # Conditional columns:
+        # Saves only for GK
+        if position != "GK":
+            df_range = df_range.drop(columns=["Saves"], errors="ignore")
+
+        # Goals Conceded only for GK/DEF
+        if position not in ["GK", "DEF"]:
+            df_range = df_range.drop(columns=["Goals Conceded"], errors="ignore")
+
+        # Clean Sheets only for GK/DEF/MID
+        if position == "FWD":
+            df_range = df_range.drop(columns=["Clean Sheets"], errors="ignore")
+
+        st.subheader(f"📊 Points Breakdown by Gameweek (GW {gw_start}-{gw_end})")
+        st.dataframe(df_range.sort_values("Gameweek"), hide_index=True, use_container_width=True)
 
 
 # -----------------------------------------
