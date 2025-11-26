@@ -3,6 +3,7 @@ import pandas as pd
 import json
 import base64
 import os
+import plotly.express as px
 
 # -----------------------------------------
 # Session State Defaults
@@ -75,15 +76,19 @@ def load_players():
 
     df = df.merge(teams, on="team", how="left")
 
+    # Position map
     pos_map = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
     df["Position"] = df["element_type"].map(pos_map)
 
+    # Pricing
     df["Current Price"] = df["now_cost"] / 10
     df["Points Per Million"] = df["total_points"] / df["Current Price"]
 
+    # Selection %
     df["Selected By (Decimal)"] = pd.to_numeric(df["selected_by_percent"], errors="coerce") / 100
     df["Selected By %"] = df["Selected By (Decimal)"] * 100
 
+    # Template & differential (season-level, for base table)
     df["Template Value"] = df["Points Per Million"] * df["Selected By (Decimal)"]
     df["Differential Value"] = df["Points Per Million"] * (1 - df["Selected By (Decimal)"])
 
@@ -99,7 +104,6 @@ def load_weekly():
 players = load_players()
 weekly = load_weekly()
 
-
 # -----------------------------------------
 # WEEKLY RANGE LIMIT BUILD
 # -----------------------------------------
@@ -110,126 +114,6 @@ weekly_df = pd.concat(
 
 min_gw = int(weekly_df["round"].min())
 max_gw = int(weekly_df["round"].max())
-
-
-# -----------------------------------------
-# SIDEBAR FILTERS
-# -----------------------------------------
-st.sidebar.title("🔍 Filters")
-
-# Reset-all button BEFORE widgets (required)
-if st.sidebar.button("🔄 Reset All Filters"):
-    st.session_state.clear()
-    st.session_state.selected_player = "None"
-    st.rerun()
-
-team_filter = st.sidebar.selectbox(
-    "Team",
-    ["All Teams"] + sorted(players["Team"].unique()),
-    key="team_filter"
-)
-
-position_filter = st.sidebar.selectbox(
-    "Position",
-    ["All", "GK", "DEF", "MID", "FWD"],
-    key="position_filter"
-)
-
-gw_start, gw_end = st.sidebar.slider(
-    "Gameweek Range",
-    min_value=min_gw,
-    max_value=max_gw,
-    value=(min_gw, max_gw),
-    key="gw_slider"
-)
-
-sort_column = st.sidebar.selectbox(
-    "Sort Table By",
-    [
-        "Points (GW Range)",
-        "Current Price",
-        "Points Per Million",
-        "Selected By %",
-        "Template Value",
-        "Differential Value"
-    ],
-    key="sort_column"
-)
-
-sort_order = st.sidebar.radio(
-    "Sort Order",
-    ["Descending", "Ascending"],
-    key="sort_order"
-)
-
-selected_player = st.sidebar.selectbox(
-    "View Player Details",
-    ["None"] + sorted(players["web_name"].unique()),
-    key="selected_player"
-)
-
-
-# -----------------------------------------
-# FILTER DATA
-# -----------------------------------------
-filtered = players.copy()
-
-if team_filter != "All Teams":
-    filtered = filtered[filtered["Team"] == team_filter]
-
-if position_filter != "All":
-    filtered = filtered[filtered["Position"] == position_filter]
-
-
-# -----------------------------------------
-# GAMEWEEK-RANGE POINT CALCULATION
-# -----------------------------------------
-def get_points_for_range(player_id, gw1, gw2):
-    history = weekly.get(str(player_id), [])
-    if not history:
-        return 0
-    df = pd.DataFrame(history)
-    df = df[(df["round"] >= gw1) & (df["round"] <= gw2)]
-    return df["total_points"].sum()
-
-
-filtered["Points (GW Range)"] = filtered.apply(
-    lambda row: get_points_for_range(row["id"], gw_start, gw_end),
-    axis=1
-)
-
-
-# -----------------------------------------
-# FINAL TABLE FORMAT
-# -----------------------------------------
-table = filtered[[
-    "web_name",
-    "Team",
-    "Position",
-    "Points (GW Range)",
-    "Current Price",
-    "Selected By %"
-]].rename(columns={"web_name": "Player"})
-
-table["Points Per Million"] = table["Points (GW Range)"] / table["Current Price"]
-
-sel_decimal = table["Selected By %"] / 100
-table["Template Value"] = table["Points Per Million"] * sel_decimal
-table["Differential Value"] = table["Points Per Million"] * (1 - sel_decimal)
-
-round_cols = [
-    "Current Price",
-    "Points (GW Range)",
-    "Points Per Million",
-    "Selected By %",
-    "Template Value",
-    "Differential Value"
-]
-
-table[round_cols] = table[round_cols].round(2)
-
-ascending = (sort_order == "Ascending")
-table = table.sort_values(by=sort_column, ascending=ascending)
 
 
 # -----------------------------------------
@@ -344,86 +228,338 @@ def calculate_fpl_breakdown(df_match: pd.DataFrame, position: str):
     return totals, real_total
 
 
-# -----------------------------------------
-# PLAYER DETAIL VIEW
-# -----------------------------------------
-if selected_player != "None":
-
-    player_name = selected_player
-    position = players.loc[players["web_name"] == player_name, "Position"].iloc[0]
-    pid = int(players.loc[players["web_name"] == player_name, "id"].iloc[0])
+def build_player_view(player_name: str, gw_start: int, gw_end: int):
+    """
+    Build the per-player data needed for the modal:
+    - Season meta
+    - GW-range history
+    - FPL contribution breakdown
+    """
+    player_row = players[players["web_name"] == player_name].iloc[0]
+    pid = int(player_row["id"])
+    position = player_row["Position"]
 
     history = weekly.get(str(pid), [])
     df_hist = pd.DataFrame(history)
 
-    # Raw df for calculations
     df_range_raw = df_hist[(df_hist["round"] >= gw_start) & (df_hist["round"] <= gw_end)].copy()
 
-    # Early exit if no matches
     if df_range_raw.empty:
-        st.subheader(f"📌 FPL Points Contribution (GW {gw_start}-{gw_end}) — {player_name}")
-        st.info("No match data in this gameweek range.")
+        return {
+            "name": player_name,
+            "position": position,
+            "team": player_row["Team"],
+            "price": player_row["Current Price"],
+            "selected": player_row["Selected By %"],
+            "has_data": False,
+        }
+
+    breakdown_points, total_points = calculate_fpl_breakdown(df_range_raw, position)
+    breakdown_df = pd.DataFrame({
+        "Category": list(breakdown_points.keys()),
+        "Total Points": list(breakdown_points.values()),
+    })
+    breakdown_df["Percent %"] = [
+        round((v / total_points) * 100, 1) if total_points != 0 else 0
+        for v in breakdown_df["Total Points"]
+    ]
+
+    # Build display GW-range df
+    df_range = df_range_raw.copy()
+    df_range = df_range.drop(columns=[
+        "expected_goals",
+        "expected_assists",
+        "expected_goal_involvements",
+    ], errors="ignore")
+
+    df_range = df_range.rename(columns={
+        "round": "Gameweek",
+        "total_points": "Points",
+        "goals_scored": "Goals",
+        "assists": "Assists",
+        "clean_sheets": "Clean Sheets",
+        "goals_conceded": "Goals Conceded",
+        "bonus": "Bonus",
+        "minutes": "Minutes",
+        "yellow_cards": "Yellow Cards",
+        "red_cards": "Red Cards",
+        "saves": "Saves",
+    })
+
+    # Conditional display columns
+    if position != "GK":
+        df_range = df_range.drop(columns=["Saves"], errors="ignore")
+    if position not in ["GK", "DEF"]:
+        df_range = df_range.drop(columns=["Goals Conceded"], errors="ignore")
+    if position == "FWD":
+        df_range = df_range.drop(columns=["Clean Sheets"], errors="ignore")
+
+    return {
+        "name": player_name,
+        "position": position,
+        "team": player_row["Team"],
+        "price": player_row["Current Price"],
+        "selected": player_row["Selected By %"],
+        "has_data": True,
+        "total_points": total_points,
+        "breakdown_df": breakdown_df,
+        "gw_df": df_range.sort_values("Gameweek"),
+        "raw_hist": df_range_raw.sort_values("round"),
+    }
+
+
+# -----------------------------------------
+# PLAYER MODAL (Option 3)
+# -----------------------------------------
+@st.dialog("Player Analysis", width="large")
+def player_modal(player_a_name: str, player_b_name: str | None, gw_start: int, gw_end: int):
+    col_title1, col_title2 = st.columns(2)
+    with col_title1:
+        st.markdown(f"### 🎯 {player_a_name} (GW {gw_start}-{gw_end})")
+    if player_b_name:
+        with col_title2:
+            st.markdown(f"### ⚔️ {player_b_name} (GW {gw_start}-{gw_end})")
+
+    # Build data
+    a_data = build_player_view(player_a_name, gw_start, gw_end)
+    b_data = build_player_view(player_b_name, gw_start, gw_end) if player_b_name else None
+
+    # === Summary cards ===
+    cols = st.columns(2 if b_data else 1)
+
+    with cols[0]:
+        st.markdown(f"#### {a_data['name']} — {a_data['team']} ({a_data['position']})")
+        st.metric("Price (£m)", value=round(a_data["price"], 1))
+        st.metric("Selected By %", value=f"{a_data['selected']:.1f}%")
+        if a_data.get("has_data", False):
+            st.metric("Total Points (GW range)", value=int(a_data["total_points"]))
+
+    if b_data:
+        with cols[1]:
+            if not b_data.get("has_data", False):
+                st.markdown(f"#### {b_data['name']} — {b_data['team']} ({b_data['position']})")
+                st.write("No match data in this gameweek range.")
+            else:
+                st.markdown(f"#### {b_data['name']} — {b_data['team']} ({b_data['position']})")
+                st.metric("Price (£m)", value=round(b_data["price"], 1))
+                st.metric("Selected By %", value=f"{b_data['selected']:.1f}%")
+                st.metric("Total Points (GW range)", value=int(b_data["total_points"]))
+
+    st.markdown("---")
+
+    # === Points Contribution tables ===
+    st.markdown("### 🧮 FPL Points Contribution (by category)")
+
+    cols2 = st.columns(2 if b_data else 1)
+
+    if a_data.get("has_data", False):
+        with cols2[0]:
+            st.markdown(f"**{a_data['name']}**")
+            st.dataframe(
+                a_data["breakdown_df"],
+                hide_index=True,
+                use_container_width=True,
+            )
     else:
-        # Compute breakdown using raw columns
-        breakdown_points, total_points = calculate_fpl_breakdown(df_range_raw, position)
+        with cols2[0]:
+            st.write("No match data for this player in the selected range.")
 
-        breakdown_df = pd.DataFrame({
-            "Category": list(breakdown_points.keys()),
-            "Total Points": list(breakdown_points.values()),
-        })
+    if b_data and b_data.get("has_data", False):
+        with cols2[1]:
+            st.markdown(f"**{b_data['name']}**")
+            st.dataframe(
+                b_data["breakdown_df"],
+                hide_index=True,
+                use_container_width=True,
+            )
 
-        # Percent of actual FPL total
-        breakdown_df["Percent %"] = [
-            round((v / total_points) * 100, 1) if total_points != 0 else 0
-            for v in breakdown_df["Total Points"]
-        ]
+    st.markdown("---")
 
-        # Display contribution table
-        st.subheader(f"📌 FPL Points Contribution (GW {gw_start}-{gw_end}) — {player_name}")
-        st.dataframe(breakdown_df, hide_index=True, use_container_width=True)
+    # === Line charts of points per GW ===
+    st.markdown("### 📈 Points per Gameweek")
 
-        # -----------------------------------------
-        # GAMEWEEK BREAKDOWN TABLE (DISPLAY-FRIENDLY)
-        # -----------------------------------------
-        df_range = df_range_raw.copy()
+    cols3 = st.columns(2 if b_data else 1)
 
-        # Drop expected stats
-        df_range = df_range.drop(columns=[
-            "expected_goals",
-            "expected_assists",
-            "expected_goal_involvements",
-        ], errors="ignore")
+    if a_data.get("has_data", False):
+        with cols3[0]:
+            fig_a = px.line(
+                a_data["raw_hist"],
+                x="round",
+                y="total_points",
+                markers=True,
+                title=f"Points per GW — {a_data['name']}",
+            )
+            st.plotly_chart(fig_a, use_container_width=True)
 
-        # Rename for display
-        df_range = df_range.rename(columns={
-            "round": "Gameweek",
-            "total_points": "Points",
-            "goals_scored": "Goals",
-            "assists": "Assists",
-            "clean_sheets": "Clean Sheets",
-            "goals_conceded": "Goals Conceded",
-            "bonus": "Bonus",
-            "minutes": "Minutes",
-            "yellow_cards": "Yellow Cards",
-            "red_cards": "Red Cards",
-            "saves": "Saves",
-        })
+    if b_data and b_data.get("has_data", False):
+        with cols3[1]:
+            fig_b = px.line(
+                b_data["raw_hist"],
+                x="round",
+                y="total_points",
+                markers=True,
+                title=f"Points per GW — {b_data['name']}",
+            )
+            st.plotly_chart(fig_b, use_container_width=True)
 
-        # Conditional columns:
-        # Saves only for GK
-        if position != "GK":
-            df_range = df_range.drop(columns=["Saves"], errors="ignore")
+    st.markdown("---")
 
-        # Goals Conceded only for GK/DEF
-        if position not in ["GK", "DEF"]:
-            df_range = df_range.drop(columns=["Goals Conceded"], errors="ignore")
+    # === GW breakdown tables ===
+    st.markdown("### 📊 Points Breakdown by Gameweek")
 
-        # Clean Sheets only for GK/DEF/MID
-        if position == "FWD":
-            df_range = df_range.drop(columns=["Clean Sheets"], errors="ignore")
+    cols4 = st.columns(2 if b_data else 1)
 
-        st.subheader(f"📊 Points Breakdown by Gameweek (GW {gw_start}-{gw_end})")
-        st.dataframe(df_range.sort_values("Gameweek"), hide_index=True, use_container_width=True)
+    if a_data.get("has_data", False):
+        with cols4[0]:
+            st.markdown(f"**{a_data['name']}** — GW breakdown")
+            st.dataframe(a_data["gw_df"], hide_index=True, use_container_width=True)
+
+    if b_data and b_data.get("has_data", False):
+        with cols4[1]:
+            st.markdown(f"**{b_data['name']}** — GW breakdown")
+            st.dataframe(b_data["gw_df"], hide_index=True, use_container_width=True)
+
+
+# -----------------------------------------
+# SIDEBAR FILTERS
+# -----------------------------------------
+st.sidebar.title("🔍 Filters")
+
+# Reset-all button FIRST
+if st.sidebar.button("🔄 Reset All Filters"):
+    st.session_state.clear()
+    st.session_state.selected_player = "None"
+    st.rerun()
+
+team_filter = st.sidebar.selectbox(
+    "Team",
+    ["All Teams"] + sorted(players["Team"].unique()),
+    key="team_filter"
+)
+
+position_filter = st.sidebar.selectbox(
+    "Position",
+    ["All", "GK", "DEF", "MID", "FWD"],
+    key="position_filter"
+)
+
+gw_start, gw_end = st.sidebar.slider(
+    "Gameweek Range",
+    min_value=min_gw,
+    max_value=max_gw,
+    value=(min_gw, max_gw),
+    key="gw_slider"
+)
+
+sort_column = st.sidebar.selectbox(
+    "Sort Table By",
+    [
+        "Points (GW Range)",
+        "Current Price",
+        "Points Per Million",
+        "Selected By %",
+        "Template Value",
+        "Differential Value"
+    ],
+    key="sort_column"
+)
+
+sort_order = st.sidebar.radio(
+    "Sort Order",
+    ["Descending", "Ascending"],
+    key="sort_order"
+)
+
+# Player A + optional comparison player
+player_a = st.sidebar.selectbox(
+    "Player A (Primary)",
+    ["None"] + sorted(players["web_name"].unique()),
+    key="player_a"
+)
+
+compare_toggle = st.sidebar.checkbox(
+    "Compare with another player",
+    value=False,
+    key="compare_toggle"
+)
+
+player_b = None
+if compare_toggle:
+    player_b = st.sidebar.selectbox(
+        "Player B (Comparison)",
+        ["None"] + sorted(players["web_name"].unique()),
+        key="player_b"
+    )
+    if player_b == "None":
+        player_b = None
+
+# Button to open the modal
+if st.sidebar.button("Open Player View"):
+    if player_a != "None":
+        player_modal(player_a, player_b, gw_start, gw_end)
+    else:
+        st.sidebar.warning("Please select at least Player A before opening the view.")
+
+
+# -----------------------------------------
+# FILTER DATA FOR MAIN TABLE
+# -----------------------------------------
+filtered = players.copy()
+
+if team_filter != "All Teams":
+    filtered = filtered[filtered["Team"] == team_filter]
+
+if position_filter != "All":
+    filtered = filtered[filtered["Position"] == position_filter]
+
+
+def get_points_for_range(player_id, gw1, gw2):
+    history = weekly.get(str(player_id), [])
+    if not history:
+        return 0
+    df = pd.DataFrame(history)
+    df = df[(df["round"] >= gw1) & (df["round"] <= gw2)]
+    return df["total_points"].sum()
+
+
+filtered["Points (GW Range)"] = filtered.apply(
+    lambda row: get_points_for_range(row["id"], gw_start, gw_end),
+    axis=1
+)
+
+
+# -----------------------------------------
+# FINAL TABLE
+# -----------------------------------------
+table = filtered[[
+    "web_name",
+    "Team",
+    "Position",
+    "Points (GW Range)",
+    "Current Price",
+    "Selected By %"
+]].rename(columns={"web_name": "Player"})
+
+# Recalculate dynamic metrics based on GW-range points
+table["Points Per Million"] = table["Points (GW Range)"] / table["Current Price"]
+
+sel_decimal = table["Selected By %"] / 100
+table["Template Value"] = table["Points Per Million"] * sel_decimal
+table["Differential Value"] = table["Points Per Million"] * (1 - sel_decimal)
+
+round_cols = [
+    "Current Price",
+    "Points (GW Range)",
+    "Points Per Million",
+    "Selected By %",
+    "Template Value",
+    "Differential Value"
+]
+
+table[round_cols] = table[round_cols].round(2)
+
+ascending = (sort_order == "Ascending")
+table = table.sort_values(by=sort_column, ascending=ascending)
 
 
 # -----------------------------------------
