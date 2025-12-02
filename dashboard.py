@@ -449,20 +449,25 @@ def build_points_contribution(df_hist: pd.DataFrame, position: str):
 # CONTRIBUTION BAR CHART (points)
 # =========================================
 def build_contrib_bar(contrib_dfs, names):
-    categories = [
-        "Minutes",
-        "Goals",
-        "Assists",
-        "Clean Sheets",
-        "Saves",
-        "Bonus",
-        "Defensive Contribution",
-    ]
+    """
+    Bar chart now mirrors the exact categories shown in the FPL Contribution Table.
+    It dynamically shows only the relevant categories based on player positions.
+    """
+
+    # Determine union of all categories across all players in comparison
+    categories = []
+    for df in contrib_dfs:
+        cats = df["Category"].tolist()
+        for c in cats:
+            if c not in categories:
+                categories.append(c)
 
     fig = go.Figure()
+
     for name, df_c in zip(names, contrib_dfs):
         d = df_c.set_index("Category")
         values = [float(d.loc[c, "Points"]) if c in d.index else 0.0 for c in categories]
+
         fig.add_trace(
             go.Bar(
                 x=categories,
@@ -475,10 +480,12 @@ def build_contrib_bar(contrib_dfs, names):
         barmode="group",
         xaxis_title="Category",
         yaxis_title="Points",
-        showlegend=True,
         margin=dict(l=40, r=40, t=40, b=40),
+        showlegend=True,
     )
+
     return fig
+
 
 
 # =========================================
@@ -791,3 +798,4 @@ if st.session_state.view_mode == "main":
     )
 
 st.markdown("</div>", unsafe_allow_html=True)
+
