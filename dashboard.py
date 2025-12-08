@@ -18,8 +18,11 @@ if "selected_player_id" not in st.session_state:
 if "compare_players_ids" not in st.session_state:
     st.session_state.compare_players_ids = []
 
-if "compare_dropdown_id" not in st.session_state:
-    st.session_state.compare_dropdown_id = None
+if "primary_player_id" not in st.session_state:
+    st.session_state.primary_player_id = None
+
+if "compare_player_id" not in st.session_state:
+    st.session_state.compare_player_id = None
 
 if "reset_flag" not in st.session_state:
     st.session_state.reset_flag = False
@@ -68,7 +71,6 @@ def set_background(image_file: str):
 
 IMAGE_PATH = "bg1.png"  # make sure this exists in the repo root
 set_background(IMAGE_PATH)
-
 
 # ==========================================================================
 # LOCAL CACHE PATHS (for weekly history)
@@ -148,6 +150,9 @@ weekly = load_weekly()
 # Dict for fast lookup by ID
 players_by_id = {int(row["id"]): row for _, row in players.iterrows()}
 
+# All player IDs as ints
+ALL_PLAYER_IDS = players["id"].astype(int).tolist()
+
 # Build combined weekly df for slider bounds
 weekly_df = pd.concat(
     [pd.DataFrame(v) for v in weekly.values()],
@@ -174,7 +179,8 @@ def apply_reset():
     st.session_state.sort_column = "Points (GW Range)"
     st.session_state.sort_order = "Descending"
     st.session_state.selected_player_id = None
-    st.session_state.compare_dropdown_id = None
+    st.session_state.primary_player_id = None
+    st.session_state.compare_player_id = None
     st.session_state.compare_players_ids = []
     st.session_state.view_mode = "main"
 
@@ -182,6 +188,16 @@ def apply_reset():
 if st.session_state.reset_flag:
     apply_reset()
     st.session_state.reset_flag = False
+
+
+# Helper to turn ID → label for dropdowns
+def id_to_label(pid: int | None) -> str:
+    if pid is None:
+        return "None"
+    row = players_by_id.get(int(pid))
+    if row is None:
+        return "Unknown"
+    return row["display_name"]
 
 
 # ==========================================================================
@@ -231,52 +247,48 @@ sort_order = st.sidebar.radio(
 st.sidebar.markdown("---")
 st.sidebar.subheader("👤 Player Analysis / Comparison")
 
-# ---- PRIMARY PLAYER SELECT (ID keyed) ----
-primary_options = {row["display_name"]: int(row["id"]) for _, row in players.iterrows()}
-primary_display = st.sidebar.selectbox(
+# ---- PRIMARY PLAYER SELECT (ID-based with format_func) ----
+primary_options = [None] + ALL_PLAYER_IDS
+st.session_state.primary_player_id = st.sidebar.selectbox(
     "Primary Player",
-    ["None"] + list(primary_options.keys()),
+    primary_options,
+    format_func=id_to_label,
+    key="primary_player_id",
 )
+st.session_state.selected_player_id = st.session_state.primary_player_id
 
-if primary_display == "None":
-    st.session_state.selected_player_id = None
+# ---- COMPARISON PLAYER (same position as primary, also ID-based) ----
+if st.session_state.primary_player_id is not None:
+    primary_pos = players_by_id[st.session_state.primary_player_id]["Position"]
+    pos_ids = players.loc[players["Position"] == primary_pos, "id"].astype(int).tolist()
+    compare_candidates = [None] + pos_ids
 else:
-    st.session_state.selected_player_id = primary_options[primary_display]
+    compare_candidates = [None] + ALL_PLAYER_IDS
 
-# ---- COMPARISON PLAYER (same position as primary) ----
-if st.session_state.selected_player_id is not None:
-    primary_pos = players_by_id[st.session_state.selected_player_id]["Position"]
-    df_pos = players[players["Position"] == primary_pos]
-    compare_options = {row["display_name"]: int(row["id"]) for _, row in df_pos.iterrows()}
-else:
-    compare_options = {row["display_name"]: int(row["id"]) for _, row in players.iterrows()}
-
-compare_display = st.sidebar.selectbox(
-    "Second Player",
-    ["None"] + list(compare_options.keys()),
+st.session_state.compare_player_id = st.sidebar.selectbox(
+    "Second Player (same position where possible)",
+    compare_candidates,
+    format_func=id_to_label,
+    key="compare_player_id",
 )
-
-if compare_display == "None":
-    st.session_state.compare_dropdown_id = None
-else:
-    st.session_state.compare_dropdown_id = compare_options[compare_display]
 
 # ---- ACTION BUTTONS ----
 col_btn1, col_btn2 = st.sidebar.columns(2)
 
 with col_btn1:
     if st.button("View Player"):
-        if st.session_state.selected_player_id is not None:
+        if st.session_state.primary_player_id is not None:
             st.session_state.view_mode = "single"
-            st.session_state.compare_players_ids = [st.session_state.selected_player_id]
+            st.session_state.compare_players_ids = [st.session_state.primary_player_id]
 
 with col_btn2:
     if st.button("Compare Players"):
-        chosen = []
-        if st.session_state.selected_player_id is not None:
-            chosen.append(st.session_state.selected_player_id)
-        if st.session_state.compare_dropdown_id is not None:
-            chosen.append(st.session_state.compare_dropdown_id)
+        chosen: list[int] = []
+        if st.session_state.primary_player_id is not None:
+            chosen.append(st.session_state.primary_player_id)
+        if st.session_state.compare_player_id is not None:
+            chosen.append(st.session_state.compare_player_id)
+        # Deduplicate while preserving order
         chosen = list(dict.fromkeys(chosen))
         if len(chosen) >= 2:
             st.session_state.compare_players_ids = chosen[:2]
